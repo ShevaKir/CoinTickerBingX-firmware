@@ -29,11 +29,13 @@
   .sub { color: var(--t3); margin: 0 0 18px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--t3); margin: 0 0 10px; font-weight: 600; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px 16px; }
+  .card, main { min-width: 0; }
   .k { color: var(--t3); font-size: 13px; }
   .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .v.warn { color: var(--warn); } .v.bad { color: var(--bad); }
-  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; margin: 0 -4px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
   th, td { text-align: right; padding: 6px 4px; border-top: 1px solid var(--line); white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
   th { color: var(--t3); font-weight: 500; font-size: 13px; border-top: 0; }
@@ -146,7 +148,7 @@ function describe(e) {
 }
 
 const fmtTime = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-const fmtDay = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "2-digit", month: "short" });
+const fmtDay = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short" });
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const hm = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + m % 60 + "m" : ""}` : m ? m + "m" : "–";
 
@@ -201,7 +203,7 @@ function render(d) {
     </section>
     <section class="card">
       <h2>By day</h2>
-      ${days ? `<table><tr><th>Day</th><th>On</th><th>Offline</th><th>Starts</th><th>Drops</th><th>BingX</th></tr>${days}</table>`
+      ${days ? `<div class="scroll"><table><tr><th>Day</th><th>On</th><th>Offline</th><th>Starts</th><th>Drops</th><th>BingX</th></tr>${days}</table></div>`
              : '<p class="note">No days recorded yet (the clock is set once the ticker is online).</p>'}
     </section>
     <p class="note">Times are in this phone's time zone. "Starts" counts every power-on and restart;
