@@ -1,0 +1,244 @@
+<!doctype html>
+<!--
+  Decoder for the ticker's diagnostics QR (Menu > About > Diagnostics > Show QR code).
+  Source of truth: docs/diag.html in the private repo; published as d/index.html in the public
+  OTA repo by firmware/CoinTickerBingX/scripts/publish_diag.sh, served by GitHub Pages.
+  The log travels after the '#': browsers never send that part to the server, nothing is stored.
+  Format: Diag::pack() in firmware/CoinTickerBingX/Diag.cpp.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Ticker diagnostics</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --line: #e3e6eb; --t1: #0e1015; --t2: #4a505c; --t3: #8b93a1;
+    --brand: #0f5ffe; --warn: #b07800; --bad: #d92d40; --good: #1b9e3e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --card: #0e1015; --line: #1e222b; --t1: #fff; --t2: #c9ced6; --t3: #8b93a1;
+            --brand: #3d7dff; --warn: #ffd23f; --bad: #ff4d5e; --good: #2de82a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--t1);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: var(--t3); margin: 0 0 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--t3); margin: 0 0 10px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; }
+  .k { color: var(--t3); font-size: 13px; }
+  .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .v.warn { color: var(--warn); } .v.bad { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 4px; border-top: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--t3); font-weight: 500; font-size: 13px; border-top: 0; }
+  td.z { color: var(--t3); }
+  .ev { display: grid; grid-template-columns: 9.5em 1fr; gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .ev:first-of-type { border-top: 0; }
+  .ev time { color: var(--t3); font-size: 13px; padding-top: 2px; }
+  .ev .what { font-weight: 600; }
+  .ev .how { color: var(--t2); grid-column: 2; font-size: 14px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer;
+           background: var(--brand); color: #fff; }
+  button.alt { background: var(--card); color: var(--t1); border: 1px solid var(--line); }
+  .err { color: var(--bad); }
+  .note { color: var(--t3); font-size: 13px; }
+  @media (max-width: 420px) { .ev { grid-template-columns: 1fr; } .ev .how { grid-column: 1; } }
+</style>
+</head>
+<body>
+<main id="app"><p class="note">Reading the code…</p></main>
+<script>
+"use strict";
+const EPOCH = Date.UTC(2025, 0, 1);
+
+const BOOT = ["Unknown reason", "Power on", "Power dip (brownout)", "Crash", "Watchdog (frozen)", "Restart", "Other reset"];
+const WIFI = ["Connection lost", "Router not found", "Wrong password", "Weak signal", "Router refused"];
+const API = ["Error", "No connection", "Timed out", "Rate limited", "Request refused (4xx)", "Server error (5xx)", "Bad data"];
+const OTA = ["Update installed", "Update rolled back", "Download failed", "Bad signature", "Checksum mismatch", "Flash write failed"];
+
+function b64url(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function minutes(v) {
+  if (v === 255) return null;
+  return v < 120 ? v : 120 + (v - 120) * 15;
+}
+
+// Diag::pack() in Diag.cpp, format 1.
+function decode(b) {
+  let p = 0;
+  const u8 = () => { if (p >= b.length) throw new Error("truncated"); return b[p++]; };
+  const u16 = () => u8() | u8() << 8;
+  const u24 = () => u8() | u8() << 8 | u8() << 16;
+  const at = m => m ? new Date(EPOCH + (m - 1) * 60000) : null;
+
+  const d = { format: u8() };
+  if (d.format !== 1) throw new Error("unknown format " + d.format);
+  const id = [u8(), u8()];
+  d.device = "CT-BX-" + id.map(x => x.toString(16).toUpperCase().padStart(2, "0")).join("");
+  d.version = [u8(), u8(), u8()].join(".");
+  d.now = at(u24());
+  d.uptimeMin = u16();
+  d.boots = u16();
+  d.brownouts = u8();
+  d.crashes = u8();
+  d.wifiDrops = u16();
+  d.offlineHours = u16();
+  d.apiOutages = u8();
+  d.otaFails = u8();
+  d.minHeapKb = u8();
+  d.clearedAt = at(u24());
+  const ref = u16();
+  d.days = [];
+  for (let n = u8(); n > 0; n--) {
+    const ago = u8(), f = u8();
+    const day = { date: ref ? new Date(EPOCH + (ref - 1 - ago) * 86400000) : null, ago };
+    day.up = f & 1 ? u8() * 6 : 0;
+    day.off = f & 2 ? u8() * 6 : 0;
+    day.boots = f & 4 ? u8() : 0;
+    day.drops = f & 8 ? u8() : 0;
+    day.api = f & 16 ? u8() : 0;
+    d.days.push(day);
+  }
+  d.events = [];
+  for (let n = u8(); n > 0; n--) {
+    const t = u24(), kd = u8(), value = u8();
+    d.events.push({ at: at(t), kind: kd >> 4, detail: kd & 15, value });
+  }
+  return d;
+}
+
+function dur(m) {
+  if (m === null) return null;
+  if (m < 1) return "under a minute";
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${r} min` : `${h} h`;
+}
+
+function describe(e) {
+  const m = minutes(e.value);
+  switch (e.kind) {
+    case 1: return { color: e.detail === 2 || e.detail === 3 || e.detail === 4 ? "bad" : "brand",
+      what: BOOT[e.detail] || "Start",
+      how: m === null ? "No Wi-Fi until the next restart" : "Online " + (m < 1 ? "within a minute" : "after " + dur(m)) };
+    case 2: return { color: "warn", what: "Wi-Fi: " + (WIFI[e.detail] || "lost"),
+      how: m === null ? "Back only after a restart (or power went off)" : "Back after " + dur(m) };
+    case 3: return { color: "warn", what: "BingX unavailable: " + (API[e.detail] || "error"),
+      how: m === null ? "Until the next restart" : "For " + dur(m) };
+    case 4: return { color: e.detail === 0 ? "good" : "bad", what: OTA[e.detail] || "Update", how: "" };
+    case 5: return { color: "bad", what: "Low memory", how: e.value + " KB free at the lowest" };
+    default: return { color: "t3", what: "Event " + e.kind, how: "" };
+  }
+}
+
+const fmtTime = new Intl.DateTimeFormat(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+const fmtDay = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "2-digit", month: "short" });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const hm = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + m % 60 + "m" : ""}` : m ? m + "m" : "–";
+
+function report(d) {
+  const lines = [`${d.device} · firmware ${d.version}`,
+    `As of ${d.now ? fmtTime.format(d.now) : "unknown time"}, up ${dur(d.uptimeMin)}`,
+    `Since ${d.clearedAt ? fmtTime.format(d.clearedAt) : "the last clear"}: ${d.boots} starts, ${d.brownouts} power dips, ${d.crashes} crashes, ${d.wifiDrops} Wi-Fi drops, ${d.offlineHours} h offline, ${d.apiOutages} BingX outages, ${d.otaFails} failed updates, min free memory ${d.minHeapKb} KB`, ""];
+  for (const e of d.events) {
+    const x = describe(e);
+    lines.push(`${e.at ? fmtTime.format(e.at) : "time unknown"}  ${x.what}${x.how ? " — " + x.how : ""}`);
+  }
+  return lines.join("\n");
+}
+
+function render(d) {
+  const stat = (k, v, cls = "") => `<div><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
+  const days = d.days.map(x => `<tr><td>${x.date ? fmtDay.format(x.date) : x.ago + " d ago"}</td>
+    <td${x.up ? "" : ' class="z"'}>${hm(x.up)}</td><td${x.off ? "" : ' class="z"'}>${hm(x.off)}</td>
+    <td${x.boots ? "" : ' class="z"'}>${x.boots || "–"}</td><td${x.drops ? "" : ' class="z"'}>${x.drops || "–"}</td>
+    <td${x.api ? "" : ' class="z"'}>${x.api || "–"}</td></tr>`).join("");
+  const colors = { bad: "var(--bad)", warn: "var(--warn)", good: "var(--good)", brand: "var(--brand)", t3: "var(--t3)" };
+  const events = d.events.map(e => {
+    const x = describe(e);
+    return `<div class="ev"><time>${e.at ? fmtTime.format(e.at) : "time unknown"}</time>
+      <div class="what"><span class="dot" style="background:${colors[x.color]}"></span>${esc(x.what)}</div>
+      ${x.how ? `<div class="how">${esc(x.how)}</div>` : ""}</div>`;
+  }).join("");
+
+  document.getElementById("app").innerHTML = `
+    <h1>${d.device}</h1>
+    <p class="sub">Firmware ${d.version} · as of ${d.now ? fmtTime.format(d.now) : "unknown time"} · up ${dur(d.uptimeMin)}</p>
+    <div class="actions">
+      <button id="share">Share link</button>
+      <button class="alt" id="copy">Copy as text</button>
+    </div>
+    <section class="card">
+      <h2>Since ${d.clearedAt ? fmtTime.format(d.clearedAt) : "the last clear"}</h2>
+      <div class="grid">
+        ${stat("Starts", d.boots)}
+        ${stat("Power dips", d.brownouts, d.brownouts ? "warn" : "")}
+        ${stat("Crashes", d.crashes, d.crashes ? "bad" : "")}
+        ${stat("Wi-Fi drops", d.wifiDrops, d.wifiDrops ? "warn" : "")}
+        ${stat("Offline", d.offlineHours + " h", d.offlineHours ? "warn" : "")}
+        ${stat("BingX outages", d.apiOutages, d.apiOutages ? "warn" : "")}
+        ${stat("Failed updates", d.otaFails, d.otaFails ? "bad" : "")}
+        ${stat("Lowest free memory", d.minHeapKb + " KB", d.minHeapKb < 20 ? "bad" : "")}
+      </div>
+    </section>
+    <section class="card">
+      <h2>Latest events</h2>
+      ${events || '<p class="note">Nothing went wrong.</p>'}
+    </section>
+    <section class="card">
+      <h2>By day</h2>
+      ${days ? `<table><tr><th>Day</th><th>On</th><th>Offline</th><th>Starts</th><th>Drops</th><th>BingX</th></tr>${days}</table>`
+             : '<p class="note">No days recorded yet (the clock is set once the ticker is online).</p>'}
+    </section>
+    <p class="note">Times are in this phone's time zone. "Starts" counts every power-on and restart;
+      a power dip means the supply sagged (weak adapter or cable). The data is in the link itself, nothing is stored online.</p>`;
+
+  document.getElementById("share").onclick = () => {
+    if (navigator.share) navigator.share({ title: d.device + " diagnostics", url: location.href }).catch(() => {});
+    else navigator.clipboard.writeText(location.href).then(() => flash("share", "Link copied"));
+  };
+  document.getElementById("copy").onclick = () =>
+    navigator.clipboard.writeText(report(d) + "\n\n" + location.href).then(() => flash("copy", "Copied"));
+}
+
+function flash(id, text) {
+  const b = document.getElementById(id), old = b.textContent;
+  b.textContent = text;
+  setTimeout(() => (b.textContent = old), 1500);
+}
+
+function main() {
+  const hash = location.hash.slice(1);
+  const app = document.getElementById("app");
+  if (!hash) {
+    app.innerHTML = `<h1>Ticker diagnostics</h1><p class="sub">Open this page by scanning the QR code on the ticker:
+      Menu → About → Diagnostics → Show QR code.</p>`;
+    return;
+  }
+  try {
+    render(decode(b64url(hash)));
+  } catch (e) {
+    app.innerHTML = `<h1>Ticker diagnostics</h1><p class="err">This link is damaged or incomplete (${esc(e.message)}).
+      Scan the code again.</p>`;
+  }
+}
+
+if (typeof module !== "undefined") module.exports = { decode, describe, minutes, report };
+else main();
+</script>
+</body>
+</html>
