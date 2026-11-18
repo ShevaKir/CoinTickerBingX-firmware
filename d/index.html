@@ -64,7 +64,7 @@ const EPOCH = Date.UTC(2025, 0, 1);
 const BOOT = ["Unknown reason", "Power on", "Power dip (brownout)", "Crash", "Watchdog (frozen)", "Restart", "Other reset"];
 const WIFI = ["Connection lost", "Router not found", "Wrong password", "Weak signal", "Router refused"];
 const API = ["Error", "No connection", "Timed out", "Rate limited", "Request refused (4xx)", "Server error (5xx)", "Bad data"];
-const OTA = ["Update installed", "Update rolled back", "Download failed", "Bad signature", "Checksum mismatch", "Flash write failed"];
+const OTA = ["Update installed", "Update rolled back", "Download failed", "Bad signature", "Checksum mismatch", "Flash write failed", "Update check couldn't connect"];
 
 function b64url(s) {
   s = s.replace(/-/g, "+").replace(/_/g, "/");
@@ -141,7 +141,8 @@ function describe(e) {
       how: m === null ? "Back only after a restart (or power went off)" : "Back after " + dur(m) };
     case 3: return { color: "warn", what: "BingX unavailable: " + (API[e.detail] || "error"),
       how: m === null ? "Until the next restart" : "For " + dur(m) };
-    case 4: return { color: e.detail === 0 ? "good" : "bad", what: OTA[e.detail] || "Update", how: "" };
+    case 4: return { color: e.detail === 0 ? "good" : e.detail === 6 ? "warn" : "bad", what: OTA[e.detail] || "Update",
+      how: e.value ? "Largest free memory block " + e.value + " KB" : "" };
     case 5: return { color: "bad", what: "Low memory", how: e.value + " KB free at the lowest" };
     default: return { color: "t3", what: "Event " + e.kind, how: "" };
   }
